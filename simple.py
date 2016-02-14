@@ -3,12 +3,26 @@
 
 from wsgiref.simple_server import make_server
 
+def makelist(data):
+    if isinstance(data, (tuple, list, set, dict)):
+        return list(data)
+    elif data:
+        return [data]
+    else:
+        return []
+
 class Router():
     """route->targe collection"""
-    def __init__(self, arg):
-        super(Router, self).__init__()
-        self.arg = arg
+    def __init__(self):
+        pass
 
+    def add(self, route):
+        """Add a route"""
+        pass
+
+class Route():
+    def __init__(self):
+        pass
 
 class Simple():
     """Simple Web Application"""
@@ -16,10 +30,28 @@ class Simple():
         self.routes = []
         self.router = Router()
         pass
+    def run(self, host = '127.0.0.1', port = 8080):
+        run(self, host, port)
 
-    def route(self, path=None, method='GET'):
-        """Add a route for current application"""
-        pass
+    def route(self, path=None, method='GET', **config):
+        """Add a route for current application
+        @app.route('/hello/{name}')
+        def hello(name):
+            return 'Hello %s' % name
+        """
+        def decorator(callback):
+            for rule in makelist(path):
+                for m in makelist(method):
+                    m = m.upper()
+                    route = Route() # new route
+                    self.add_route(route)
+
+        return decorator
+
+    def add_route(self, route):
+        """Add a route object"""
+        self.routes.append(route)
+        self.router.add(route)
 
     def _handle(self, environ):
         """Actual handler for wsgi request, get the route and pass"""

@@ -1,7 +1,9 @@
-from simple import route, run
+from simple import Simple
 
-@route('/hello')
+app = Simple()
+
+@app.route('/hello')
 def hello():
     return "Hello World!"
 
-run(host='localhost', port=8080)
+app.run(host='localhost', port=8080)
