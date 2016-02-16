@@ -9,7 +9,7 @@
 #    return 'Hello %s' % name
 #
 # func, args = router.match('/hello/world')
-# print(func.call(**args))
+# print(func(**args))
 
 import re
 
@@ -55,18 +55,24 @@ class Router():
         self.dynamic_rules = {}
         self.dispatch = None
 
+        # filter is use to parse patterns such as <name:filter:conf>
+        # a filter is a function that takes conf and return (conf_to_regex, str_to_param)
         self.filters = {
-                're':    lambda conf: _re_flatten(conf or self.default_pattern),
-                'int':   lambda conf: r'-?\d+',
-                'float': lambda conf: r'-?[\d.]+',
-                'path':  lambda conf: r'.+?',
+                're':    lambda conf: (_re_flatten(conf or self.default_pattern), None),
+                'int':   lambda conf: (r'-?\d+', int),
+                'float': lambda conf: (r'-?[\d.]+', float),
+                'path':  lambda conf: (r'.+?', None)
                 }
+
+    def add_filter(self, name, func):
+        """Add a custom filter"""
+        self.filters[name] = func
 
     def match(self, environ):
         """dispatch URL
 
         :environ: TODO
-        :returns: TODO
+        :returns: (target_function, dict_of_parameters)
 
         """
         method = environ['REQUEST_METHOD'].upper()
@@ -85,12 +91,19 @@ class Router():
         raise Exception('404')
 
     def route(self, path=None, method='GET', callback=None):
-        """Add a rule to router
+        """Add a rule to router, this is a decorator
 
-        :path: TODO
-        :method: TODO
-        :callback: TODO
-        :returns: TODO
+            @router.route('/hello/<name>')
+            def hello(name):
+               return 'Hello %s' % name
+
+        the `<name>` part is wildcard.
+
+        :path: URL pattern
+        :method: ['GET' or 'POST' or ...]
+        :callback: callback function, i.e. target handler
+            This is used when you don't want avoid the decorator style. so that we can use
+            `route(..., callback=func)`, and equals `route(...)(func)`
 
         """
         if callable(path):
@@ -106,15 +119,14 @@ class Router():
     def add(self, rule, method, target):
         """add a new rule
 
-        :rule: TODO
-        :method: TODO
-        :target: TODO
-        :name: TODO
-        :returns: TODO
+        :rule: URL pattern such as '/hello/<name>'
+        :method: ['GET' or 'POST' or ...]
+        :target: handler if a rule is matched
 
         """
         is_static = True
         method = method.upper()
+        filters = {}
 
         # we konw the last one is dummy
         components = [x.groups() for x in _rule_re.finditer(rule)][:-1]
@@ -128,12 +140,13 @@ class Router():
 
             is_static = False
             if not name:
-                raise Exception('Invalid Patter, should be "<name:mode:conf>"')
+                raise Exception('Invalid Pattern, should be "<name:mode:conf>"')
 
             if not mode:
                 mode = self.default_filter
 
-            tmp_regex = self.filters[mode](conf)
+            tmp_regex, out_filter = self.filters[mode](conf)
+            if out_filter: filters[name] = out_filter
             target_regex.append('(?P<%s>%s)' % (name, tmp_regex))
 
         if is_static:
@@ -145,9 +158,17 @@ class Router():
         re_pattern = '^(%s)$' % ''.join(target_regex)
         re_match = re.compile(re_pattern).match
 
-        def get_args(url):
-            """get the url parameters"""
-            return re_match(url).groupdict()
+        if filters:
+            def get_args(url):
+                """get the url parameters and handle them by out_filters"""
+                params = re_match(url).groupdict()
+                for name, out_filter in filters.items():
+                    params[name] = out_filter(params[name])
+                return params
+        else:
+            def get_args(url):
+                """get the url parameters"""
+                return re_match(url).groupdict()
 
         # at last, build the pattern into the dispather
         flatpat = _re_flatten(re_pattern)
