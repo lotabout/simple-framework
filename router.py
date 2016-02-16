@@ -13,6 +13,14 @@
 
 import re
 
+def makelist(data):
+    if isinstance(data, (tuple, list, set, dict)):
+        return list(data)
+    elif data:
+        return [data]
+    else:
+        return []
+
 # used to parse rules
 _rule_re = re.compile(r'''
         (?P<prefix>[^<]*)                      # rule prefix
@@ -33,19 +41,19 @@ def _re_flatten(regex):
     if '(' not in regex:
         return regex
     return re.sub(r'(\\*)(\(\?P<[^>]+>|\((?!\?))', lambda m: m.group(0) if
-            len(m.group(1)) % 2 else m.group(1) + '(?:', p)
+            len(m.group(1)) % 2 else m.group(1) + '(?:', regex)
 
 class Router():
     """Routing class"""
 
-    default_pattern = '^[^/]'
+    default_pattern = '[^/]+'
     default_filter = 're'
 
     def __init__(self):
-        self.rules = []         # rule[method] = [rule1, rule2, ...]
-        self.static_rules = []
-        self.dynamic_rules = []
-        self.dispatcher = None
+        self.rules = {}         # rule[method] = [rule1, rule2, ...]
+        self.static_rules = {}
+        self.dynamic_rules = {}
+        self.dispatch = None
 
         self.filters = {
                 're':    lambda conf: _re_flatten(conf or self.default_pattern),
@@ -61,9 +69,22 @@ class Router():
         :returns: TODO
 
         """
-        pass
+        method = environ['REQUEST_METHOD'].upper()
+        path = environ['PATH_INFO'] or '/'
 
-    def route(self, path=Nonne, method='GET', callback=None):
+        if method in self.static_rules and path in self.static_rules[method]:
+            target, getargs = self.static_rules[method][path]
+            return target, getargs(path) if getargs else {}
+        elif method in self.dynamic_rules and self.dispatch is not None:
+                match = self.dispatch(path)
+                if match:
+                    _, _, target, getargs = self.dynamic_rules[method][match.lastindex-1]
+                    return target, getargs(path) if getargs else {}
+
+        # Not found
+        raise Exception('404')
+
+    def route(self, path=None, method='GET', callback=None):
         """Add a rule to router
 
         :path: TODO
@@ -72,7 +93,15 @@ class Router():
         :returns: TODO
 
         """
-        pass
+        if callable(path):
+            path, callback = None, path
+
+        def decorator(callback):
+            for rule in makelist(path):
+                self.add(rule, method.upper(), callback)
+            return callback
+
+        return decorator(callback) if callback else decorator
 
     def add(self, rule, method, target):
         """add a new rule
@@ -85,13 +114,14 @@ class Router():
 
         """
         is_static = True
+        method = method.upper()
 
         # we konw the last one is dummy
         components = [x.groups() for x in _rule_re.finditer(rule)][:-1]
         target_regex = []
         for prefix, name, mode, conf in components:
             if prefix:
-                target_url_regex.append(re.escape(prefix))
+                target_regex.append(re.escape(prefix))
 
             if name is None and mode is None and conf is None:
                 continue
@@ -104,7 +134,7 @@ class Router():
                 mode = self.default_filter
 
             tmp_regex = self.filters[mode](conf)
-            target_regex.append('(?P<%s>%s)' % name, regex)
+            target_regex.append('(?P<%s>%s)' % (name, tmp_regex))
 
         if is_static:
             self.static_rules.setdefault(method, {})
@@ -112,15 +142,15 @@ class Router():
             return
 
         # non-static rules
-        re_pattern = re.compile('^(%s)$' % ''.join(target_regex))
-        re_match = re_pattern.match
+        re_pattern = '^(%s)$' % ''.join(target_regex)
+        re_match = re.compile(re_pattern).match
 
-        def get_args(self, url):
+        def get_args(url):
             """get the url parameters"""
             return re_match(url).groupdict()
 
         # at last, build the pattern into the dispather
-        flatpat = _re_flatten(pattern)
+        flatpat = _re_flatten(re_pattern)
         whole_rule = (rule, flatpat, target, get_args)
 
         self.dynamic_rules.setdefault(method, []).append(whole_rule)
@@ -132,4 +162,4 @@ class Router():
 
         all_regexes = (flatpat for _, flatpat, _, _ in all_rules)
         combined = re.compile('|'.join('(^%s$)' % flatpat for flatpat in all_regexes))
-        self.dispatcher = combined.match
+        self.dispatch = combined.match
